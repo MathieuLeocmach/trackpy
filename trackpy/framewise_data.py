@@ -84,6 +84,13 @@ class FramewiseData(object):
 
     def __exit__(self, type, value, traceback):
         self.close()
+        
+    def list_traj(self):
+        """A list of unique index of all particles. This is the base class implementation, not optimized."""
+        indices = set()
+        for frame in self:
+            indices |= set(frame["particle"])
+        return list(indices)
 
 KEY_PREFIX = 'Frame_'
 len_key_prefix = len(KEY_PREFIX)
@@ -159,6 +166,14 @@ class PandasHDFStore(FramewiseData):
 
     def close(self):
         self.store.close()
+        
+    def list_traj(self):
+        """A list of unique index of all particles. This is the PandasHDFStore optimized implementation."""
+        indices = set()
+        for frame_no in self.frames:
+            for i in self.store.select_column(code_key(frame_no),"particle"):
+                indices.add(i)
+        return list(indices)
 
 
 class PandasHDFStoreBig(PandasHDFStore):
@@ -318,6 +333,13 @@ class PandasHDFStoreSingleNode(FramewiseData):
         if not pandas_type == 'frame_table':
             raise ValueError("This node is not tabular. Call with "
                              "use_tabular_copy=True to proceed.")
+                             
+    def list_traj(self, chunksize = 2**12):
+        """A list of unique index of all particles. This is the PandasHDFStoreSingleNode optimized implementation."""
+        indices = set()
+        for i in self.store.select_column(self.key,"particle", chunksize = chunksize):
+            indices.add(i)
+        return list(indices)
 
 
 def _make_tabular_copy(store, key):
