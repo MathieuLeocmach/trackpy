@@ -25,12 +25,11 @@ def list_traj(path, chunksize = 2**12):
     """
     
     with PandasHDFStoreSingleNode(path) as traj_cell:
-        chunk_uniq = []
+        indices = set()
         for chunk in traj_cell.store.select_column(traj_cell.key,"particle", chunksize = chunksize):
-            chunk_uniq.append(int(chunk))
-            chunk_uniq = list(set(chunk_uniq)) # get unique values
+            indices |= set(i for i in chunk)
             
-    return chunk_uniq
+    return list(indices)
 
                 
 
