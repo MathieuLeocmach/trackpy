@@ -77,15 +77,11 @@ def filter_index(path, savepath, pindices):
     
     with PandasHDFStoreSingleNode(path) as traj:
         with PandasHDFStoreSingleNode(savepath) as result:
-            
-            for f in range(traj.max_frame): # loop frame
-                frame = traj.store.select(traj.key, "frame == {}".format(f), columns= ['x', 'y', 'frame', 'particle']) 
+            for frame in traj: 
                 frame.set_index('particle', drop=False, inplace = True)
-                
-                # list of removing index = intersection between particle in frame and pindices
-                remove = list(set(frame.particle.values) & set(pindices)) 
-                
-                frame.drop(remove, inplace = True) #
+                #to be removed: intersection between particle in frame and pindices
+                remove = np.intersect1d(frame.particle.values, pindices)
+                frame.drop(remove, inplace = True)
                 result.put(frame)
                 
             print('Before:', len(traj.list_traj()))
@@ -106,9 +102,7 @@ def par_char(path):
     -------
     DataFrame([mass, size, ecc, particle])
     """
-    
-    
-    
+
     with PandasHDFStoreSingleNode(path) as traj:
         # get indices of all particles
         parindex = traj.list_traj() 
@@ -165,28 +159,37 @@ def emsd(path, mpp, fps, nlagtime, max_lagtime, framejump = 10, pos_columns=None
     lagtime = np.unique(np.append(np.arange(1,fps),(np.logspace(0,np.log10(max_lagtime/fps),nlagtime-fps)*fps).astype(int)))
     
     
-    with PandasHDFStoreSingleNode(path) as traj: 
-        Nframe = traj.max_frame # get number of frames
+    with PandasHDFStoreSingleNode(path) as traj:
+        # get number of frames
+        Nframe = traj.max_frame 
+        # initialize the result Dataframe
+        result = pd.DataFrame(index = lagtime, columns = result_columns) 
         
-        result = pd.DataFrame(index = lagtime, columns = result_columns) # initialize the result Dataframe
-        
-        for lg in lagtime: # loop delta t
-            lframe = range(0,Nframe + 1 - lg,framejump) # initialize t0
-            msds = pd.DataFrame(index = range(len(lframe)),columns = result_columns) # initialize DataFrame for each t0
+        # loop delta t
+        for lg in lagtime: 
+            # initialize t0
+            lframe = range(0, Nframe + 1 - lg, framejump) 
+            # initialize DataFrame for each t0
+            msds = pd.DataFrame(
+                index = range(len(lframe)),
+                columns = result_columns) 
             
             for k,f in enumerate(lframe): # loop t0
                 
                 frameA = traj.get(f)
                 frameB = traj.get(f+lg)
                 # compute different position between 2 frames for each particle
-                diff = frameB.set_index('particle')[pos_columns] - frameA.set_index('particle')[pos_columns]     
-                msds[result_columns[0]][k] = np.nanmean((diff.x.values*mpp)**2) # <x^2>
-                msds[result_columns[1]][k] = np.nanmean((diff.y.values*mpp)**2) # <y^2>
-                    
-            msds.msd = msds[result_columns[0]] + msds[result_columns[1]] # <r^2> = <x^2> + <y^2>
-            
-            result[result.index == lg] = [msds.mean()] # average over t0
-            result.loc[result.index == lg,result.columns[3]] = msds.msd.std() # get the std over each t0
+                diff = frameB.set_index('particle')[pos_columns] - frameA.set_index('particle')[pos_columns]
+                # <x^2>
+                msds[result_columns[0]][k] = np.nanmean((diff.x.values*mpp)**2)
+                # <y^2> 
+                msds[result_columns[1]][k] = np.nanmean((diff.y.values*mpp)**2)
+            # <r^2> = <x^2> + <y^2>
+            msds.msd = msds[result_columns[0]] + msds[result_columns[1]] 
+            # average over t0
+            result[result.index == lg] = [msds.mean()]
+            # get the std over each t0
+            result.loc[result.index == lg,result.columns[3]] = msds.msd.std() 
             
         result['lagt'] = lagtime/fps
           
@@ -212,18 +215,20 @@ def compute_drift(path, smoothing=0, pos_columns=None):
     if pos_columns is None:
         pos_columns = ['x', 'y']
        
-     # Drift calculation 
+    # Drift calculation 
     print('Drift calc')
-    with PandasHDFStoreSingleNode(path) as traj: # open traj.h5
+    with PandasHDFStoreSingleNode(path) as traj:
         Nframe = traj.max_frame
-        dx = pd.DataFrame(data = np.zeros((Nframe+1,2)),columns = ['x','y'])    # initialize drift DataFrame     
+        # initialize drift DataFrame     
+        dx = pd.DataFrame(data = np.zeros((Nframe+1,2)),columns = ['x','y'])    
         
-        for f in range(Nframe): # loop frame
-            frameA = traj.get(f)  # frame t
-            frameB = traj.get(f+1) # frame t+1
-            delta = frameB.set_index('particle')[pos_columns] - frameA.set_index('particle')[pos_columns]
-            dx.iloc[f+1].x = np.nanmean(delta.x.values)
-            dx.iloc[f+1].y = np.nanmean(delta.y.values) # compute drift
+        for f, frameB in enumerate(traj): # loop frame
+            if f>0:
+                delta = frameB.set_index('particle')[pos_columns] - frameA.set_index('particle')[pos_columns]
+                dx.iloc[f].x = np.nanmean(delta.x.values)
+                dx.iloc[f].y = np.nanmean(delta.y.values) # compute drift
+            #remember the current frame
+            frameA = frameB 
         
         if smoothing > 0:
             dx = pd.rolling_mean(dx, smoothing, min_periods=0)
@@ -255,13 +260,12 @@ def subtract_drift(path, savepath, drift=None):
         drift = compute_drift(path)
 
     with PandasHDFStoreSingleNode(path) as traj_old: 
-        Nframe = traj_old.max_frame
-        with PandasHDFStoreSingleNode(savepath) as traj_new: 
-            for f in range(0,Nframe+1): # loop frame
-               frame = traj_old.get(f)
+        with PandasHDFStoreSingleNode(savepath) as traj_new:
+            for f, frame in enumerate(traj_old):
                frame['x'] = frame['x'].sub(drift['x'][f])
                frame['y'] = frame['y'].sub(drift['y'][f])
-               traj_new.put(frame) # put in the new file 
+               # put in the new file
+               traj_new.put(frame)  
                                      
    
  
