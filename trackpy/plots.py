@@ -365,6 +365,120 @@ def plot_traj(traj, colorby='particle', mpp=None, label=False,
 
 ptraj = plot_traj  # convenience alias
 
+
+
+
+
+@make_axes
+def plot_traj_stream(path, mpp=None, label=False, superimpose=None,
+              cmap=None, ax=None, t_column=None,
+              pos_columns=None, chunksize = 2**10, interval = None, pindices = None, plot_style={}, **kwargs):
+    """Plot traces of trajectories for each particle for HDF5 files
+
+    Parameters
+    ----------
+    path : DataFrame
+        The DataFrame should include time and spatial coordinate columns.
+    colorby : {'particle', 'frame'}, optional
+    mpp : float, optional
+        Microns per pixel. If omitted, the labels will have units of pixels.
+    label : boolean, optional
+        Set to True to write particle ID numbers next to trajectories.
+    superimpose : ndarray, optional
+        Background image, default None
+    cmap : colormap, optional
+        This is only used in colorby='frame' mode. Default = mpl.cm.winter
+    ax : matplotlib axes object, optional
+        Defaults to current axes
+    t_column : string, optional
+        DataFrame column name for time coordinate. Default is 'frame'.
+    pos_columns : list of strings, optional
+        Dataframe column names for spatial coordinates. Default is ['x', 'y'].
+    chunksize : interger
+        Default is 2**10        
+    interval :  list = [frame_min, frame_max], optional
+        Interval of interestied frames
+    pindices : list, optional  
+        Particle of interest index
+    
+    plot_style : dictionary
+        Keyword arguments passed through to the `Axes.plot(...)` command
+
+
+
+    Returns
+    -------
+    Axes object
+    
+    See Also
+    --------
+    plot_traj3d : the 3D equivalent of `plot_traj`
+    """
+    
+    
+    import matplotlib as mpl
+    import matplotlib.pyplot as plt
+    from matplotlib.collections import LineCollection
+    
+    from trackpy import PandasHDFStoreSingleNode
+
+
+    if cmap is None:
+        cmap = plt.cm.winter
+    if t_column is None:
+        t_column = 'frame'
+    if pos_columns is None:
+        pos_columns = ['x', 'y']
+
+    
+    _plot_style = dict(linewidth=1)
+    _plot_style.update(**_normalize_kwargs(plot_style, 'line2d'))
+
+    # Axes labels
+    if mpp is None:
+        _set_labels(ax, '{} [px]', pos_columns)
+        mpp = 1.  # for computations of image extent below
+    else:
+        if mpl.rcParams['text.usetex']:
+            _set_labels(ax, r'{} [\textmu m]', pos_columns)
+        else:
+            _set_labels(ax, r'{} [\xb5m]', pos_columns)
+    # Background image
+    if superimpose is not None:
+        ax.imshow(superimpose, cmap=plt.cm.gray,
+                  origin='lower', interpolation='nearest',
+                  vmin=kwargs.get('vmin'), vmax=kwargs.get('vmax'))
+    
+    
+    with PandasHDFStoreSingleNode(path) as traj_cell:
+        
+        # assign the interval of interest
+        if interval is None:
+            fmin = 0
+            fmax = traj_cell.max_frame 
+        else:
+            fmin = interval[0]
+            fmax = interval[1]
+            
+        # get particle index
+        if pindices is None:
+            pindices = []
+            for chunk in traj_cell.store.select_column(traj_cell.key,"particle", chunksize = chunksize):
+                pindices.append(chunk)
+                pindices = list(set(pindices))
+        
+        # plot trajectories
+        for i in pindices:
+            traj = traj_cell.store.select(traj_cell.key,"particle == {0}".format(int(i))) # get one particle trajectory
+            traj = traj[((traj.frame >= fmin) & (traj.frame <= fmax))] # filter the frame interval            
+            _plot(ax, mpp*traj, pos_columns, **_plot_style)
+     
+    return invert_yaxis(ax)
+                
+ptraj = plot_traj  # convenience alias
+
+
+
 @make_axes3d
 def plot_traj3d(*args, **kwargs):
     """The 3D equivalent of `plot_traj`.
