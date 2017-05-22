@@ -5,31 +5,9 @@ Created on Thu May 18 10:19:25 2017
 
 @author: nklongvessa
 """
-
+import numpy as np
+import pandas as pd
 from trackpy import PandasHDFStoreSingleNode
-
-
-
-def list_traj(path, chunksize = 2**12):
-    """A list of unique index of all particles in a movie
-    
-    Parameters
-    ----------
-    path: string
-        path to the HDF5 file which contains DataFrames(['particle'])
-    chunksize: integer, default is 2**12   
-    
-    Returns
-    -------
-    a list that contains unique particle indices   
-    """
-    
-    with PandasHDFStoreSingleNode(path) as traj_cell:
-        indices = set()
-        for chunk in traj_cell.store.select_column(traj_cell.key,"particle", chunksize = chunksize):
-            indices |= set(i for i in chunk)
-            
-    return list(indices)
 
                 
 
@@ -50,28 +28,30 @@ def filter_stubs(path, savepath, threshold = 30, chunksize = 2**12):
     -------
     a subset of DataFrame in path, to be saved in savepath
     """
-
-    from numpy import zeros
-    from pandas import DataFrame
     
     with PandasHDFStoreSingleNode(path) as traj:
-        
-        parindex = list_traj(path) # get a list of particle index
+        # get a list of particle index
+        parindex = traj.list_traj() 
         print('1/2 Find trajectories length')
-        trajsizes = DataFrame(zeros(len(parindex)),index = parindex) # initialize a Dataframe [particle index, no. of apperance (frame)] 
-        for chunk in traj.store.select_column(traj.key,"particle", chunksize = chunksize): # find the length of each trajectory
+        # initialize a Dataframe [particle index, no. of apperance (frame)] 
+        trajsizes = pd.DataFrame(
+            np.zeros(len(parindex)),
+            index = parindex)
+        # find the length of each trajectory
+        for chunk in traj.store.select_column(traj.key,"particle", chunksize = chunksize): 
             trajsizes.loc[chunk] += 1 # bin it
         
-        print('2/2 Save to a new file')              
-        with PandasHDFStoreSingleNode(savepath) as temp: # creat a new file to store the result after stubs
-            for f in range(traj.max_frame + 1): # loop frame
-                frame = traj.get(f) # get frame by frame data
-                frame = frame[(trajsizes.loc[frame.particle.astype(int)] >= threshold).values]  # keep long enough trajectories
-               # frame.reset_index(inplace=True)
-                temp.put(frame) # store in temp.h5 file 
+        print('2/2 Save to a new file')
+        # creat a new file to store the result after stubs           
+        with PandasHDFStoreSingleNode(savepath) as temp: 
+            for f in traj: # loop frame
+                # keep long enough trajectories
+                frame = frame[(trajsizes.loc[frame.particle.astype(int)] >= threshold).values]
+                #store in temp.h5 file
+                temp.put(frame)  
         
         print('Before:', len(parindex))
-        print('After:',  len(list_traj(savepath)))
+        print('After:',  len(temp.list_traj()))
 
 
 
@@ -108,8 +88,8 @@ def filter_index(path, savepath, pindices):
                 frame.drop(remove, inplace = True) #
                 result.put(frame)
                 
-    print('Before:', len(list_traj(path)))
-    print('After:',  len(list_traj(savepath)))
+            print('Before:', len(traj.list_traj()))
+            print('After:',  len(result.list_traj()))
     
     
 
@@ -127,15 +107,18 @@ def par_char(path):
     DataFrame([mass, size, ecc, particle])
     """
     
-    from pandas import DataFrame
-    from numpy import zeros
-
-    parindex = list_traj("test_traj2.h5") # get indices of all particles
     
-    char_av = DataFrame(zeros((len(parindex),4)),index = parindex, columns = ['mass','size', 'ecc', 'particle']) # initialize result Dataframe
-    char_av.particle = parindex
     
     with PandasHDFStoreSingleNode(path) as traj:
+        # get indices of all particles
+        parindex = traj.list_traj() 
+        # initialize result Dataframe
+        char_av = pd.DataFrame(
+            np.zeros((len(parindex),4)),
+            index = parindex, 
+            columns = ['mass','size', 'ecc', 'particle']
+            ) 
+        char_av.particle = parindex
         
         for p in parindex: # loop by particle **can be improved?**
             char_t = traj.store.select(traj.key, "particle == p", columns= ['mass', 'size', 'ecc','particle']) # char of one particle in every frame
@@ -171,8 +154,6 @@ def emsd(path, mpp, fps, nlagtime, max_lagtime, framejump = 10, pos_columns=None
     -----
     Input units are pixels and frames. Output units are microns and seconds.
     """
-    import numpy as np
-    import pandas as pd
     
     if pos_columns is None:
         pos_columns = ['x', 'y']
@@ -227,8 +208,6 @@ def compute_drift(path, smoothing=0, pos_columns=None):
     -------
     drift : DataFrame([x, y], index=frame)
     """
-    import numpy as np
-    import pandas as pd
     
     if pos_columns is None:
         pos_columns = ['x', 'y']
