@@ -11,7 +11,7 @@ from trackpy import PandasHDFStoreSingleNode
 
                 
 
-def filter_stubs(path, savepath, threshold = 30, chunksize = 2**12):
+def filter_stubs(path, savepath, threshold = 30, pardump = False, chunksize = 2**15):
     """Filter out trajectories which are shorter than the threshol value. 
 
     Parameters
@@ -22,7 +22,9 @@ def filter_stubs(path, savepath, threshold = 30, chunksize = 2**12):
         path to be saved the result file as a HDF5 file 
     threshold : integer, default 30
         minimum number of points (video frames) to survive
-    chunksize : integer, default is 2**12         
+    pardump : boolean, defaults False
+        get the trajectory sizes of all particles at once. 'True' to improve the speed. 
+    chunksize : integer, default is 2**15         
 
     Returns
     -------
@@ -32,26 +34,35 @@ def filter_stubs(path, savepath, threshold = 30, chunksize = 2**12):
     with PandasHDFStoreSingleNode(path) as traj:
         # get a list of particle index
         parindex = traj.list_traj() 
-        print('1/2 Find trajectories length')
+        print('Find trajectories length')
         # initialize a Dataframe [particle index, no. of apperance (frame)] 
         trajsizes = pd.DataFrame(
             np.zeros(len(parindex)),
             index = parindex)
-        # find the length of each trajectory
-        for chunk in traj.store.select_column(traj.key,"particle", chunksize = chunksize): 
-            trajsizes.loc[chunk] += 1 # bin it
         
-        print('2/2 Save to a new file')
+        # find the length of each trajectory
+        if pardump is True: # able to get all particle index at once
+            allpar = traj.store.select_column(traj.key, "particle")
+            p = allpar.value_counts()
+            trajsizes.loc[p.index, trajsizes.columns] = p
+            p = []
+            allpar = []
+      
+        else:
+            for chunk in traj.store.select_column(traj.key,"particle", chunksize = chunksize): 
+                trajsizes.loc[chunk] += 1 # bin it
+        
         # creat a new file to store the result after stubs           
         with PandasHDFStoreSingleNode(savepath) as temp: 
-            for f in traj: # loop frame
+            for f, frame in enumerate(traj): # loop frame
+                print('Frame:', f)
                 # keep long enough trajectories
                 frame = frame[(trajsizes.loc[frame.particle.astype(int)] >= threshold).values]
                 #store in temp.h5 file
                 temp.put(frame)  
         
-        print('Before:', len(parindex))
-        print('After:',  len(temp.list_traj()))
+            print('Before:', len(parindex))
+            print('After:',  len(temp.list_traj()))
 
 
 
